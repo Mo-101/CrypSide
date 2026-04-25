@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "selection_method": "cumulative_posterior_filter",
+  "min_n": 5,
+  "success_wr_threshold": 0.5,
+  "min_posterior_pass_prob": 0.75,
+  "prior": {
+    "alpha": 1,
+    "beta": 1
+  },
+  "generated_from": {
+    "source": "trades.csv",
+    "total_trades": 391,
+    "pocket_identity": "policy|regime|side"
+  },
+  "pockets": [
+    {
+      "pocket_id": "phase2_data_burst_v1|STRONG_UPTREND|LONG",
+      "policy": "phase2_data_burst_v1",
+      "regime": "STRONG_UPTREND",
+      "side": "LONG",
+      "n": 5,
+      "wins": 4,
+      "losses": 1,
+      "unresolved": 0,
+      "observed_wr": 0.8,
+      "posterior_mean_wr": 0.714286,
+      "p_true_wr_ge_threshold": 0.890625
+    }
+  ]
+}

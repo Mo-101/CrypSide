@@ -1,0 +1,38 @@
+{
+  "entities": {
+    "Telemetry": {
+      "title": "Telemetry",
+      "description": "Global telemetry for data ingestion",
+      "type": "object",
+      "properties": {
+        "recordsProcessed": { "type": "number", "description": "Total ingested data points" },
+        "bufferSize": { "type": "number", "description": "Current buffer size in GB" },
+        "lastUpdate": { "type": "number", "description": "Timestamp" }
+      },
+      "required": ["recordsProcessed", "bufferSize", "lastUpdate"]
+    },
+    "Signal": {
+      "title": "Signal",
+      "description": "ML output trading signal",
+      "type": "object",
+      "properties": {
+        "timestamp": { "type": "number", "description": "Time generated" },
+        "pair": { "type": "string", "description": "Asset pair" },
+        "prediction": { "type": "number", "description": "Predicted value" },
+        "confidence": { "type": "number", "description": "Confidence percentage" },
+        "action": { "type": "string", "description": "Action string e.g. BUY, SELL, HOLD" }
+      },
+      "required": ["timestamp", "pair", "prediction", "confidence", "action"]
+    }
+  },
+  "firestore": {
+    "/telemetry/{telemetryId}": {
+      "schema": { "$ref": "#/entities/Telemetry" },
+      "description": "System telemetry state"
+    },
+    "/signals/{signalId}": {
+      "schema": { "$ref": "#/entities/Signal" },
+      "description": "Model predictions"
+    }
+  }
+}

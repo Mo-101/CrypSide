@@ -1,0 +1,53 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    // Helpers
+    function incoming() { return request.resource.data; }
+    
+    function isValidTelemetry(data) {
+      return data.keys().hasAll(['recordsProcessed', 'bufferSize', 'lastUpdate']) 
+          && data.keys().size() == 3
+          && data.recordsProcessed is number
+          && data.bufferSize is number
+          && data.lastUpdate is number;
+    }
+
+    function isValidSignal(data) {
+      return data.keys().hasAll(['timestamp', 'pair', 'prediction', 'confidence', 'action']) 
+          && data.keys().size() == 5
+          && data.timestamp is number
+          && data.pair is string
+          && data.pair.size() <= 20
+          && data.prediction is number
+          && data.confidence is number
+          && data.action is string
+          && data.action.size() <= 20;
+    }
+
+    match /telemetry/{telemetryId} {
+      allow read: if true;
+      allow create, update: if isValidTelemetry(incoming());
+    }
+
+    match /signals/{signalId} {
+      allow read: if true;
+      allow create: if isValidSignal(incoming());
+    }
+
+    match /live_execution/{docId} {
+      allow read, write: if true;
+    }
+
+    match /idim_signals/{document=**} {
+      allow read, write: if true;
+    }
+
+    match /idim_stats/{document=**} {
+      allow read, write: if true;
+    }
+  }
+}
