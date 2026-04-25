@@ -5,7 +5,7 @@ import { collection, query, orderBy, limit, onSnapshot, doc, setDoc, addDoc } fr
 import { db } from '../../lib/firebase';
 import { motion, AnimatePresence } from 'motion/react';
 import { Activity, ShieldCheck, Zap, TrendingUp, Cpu, Database, AlertCircle } from 'lucide-react';
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import { createChart, ColorType, AreaSeries } from 'lightweight-charts';
 
 interface Trade {
   id: string;
@@ -74,14 +74,14 @@ export default function LiveExecutionTerminal() {
       });
 
       // 2. Simulate "High Accuracy" Signal Execution
-      if (!pendingTrade && Math.random() > 0.7) {
+      if (Math.random() > 0.7) {
         const pairs = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'];
         const pair = pairs[Math.floor(Math.random() * pairs.length)];
         const entry = pair === 'BTCUSDT' ? 64000 : pair === 'ETHUSDT' ? 3400 : 145;
         const pnl = (Math.random() * 800) + 200; // Force positive Bias for "High Accuracy" Simulation
         const isWin = Math.random() < 0.75; // 75% simulated win rate as requested
 
-        setPendingTrade({
+        const executedTrade = {
           pair,
           timestamp: new Date().toISOString(),
           side: Math.random() > 0.5 ? 'LONG' : 'SHORT',
@@ -89,72 +89,89 @@ export default function LiveExecutionTerminal() {
           exit: entry + (isWin ? (pnl/10) : -(pnl/20)),
           pnl: isWin ? pnl : -pnl/2.5,
           status: 'CLOSED'
-        });
+        };
+        
+        // Auto-execute by writing directly to the 'live_execution' collection
+        addDoc(collection(db, 'live_execution'), executedTrade);
       }
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [isAutomated, pendingTrade]);
+  }, [isAutomated]);
 
-  const confirmTrade = async () => {
-    if (pendingTrade) {
-      await addDoc(collection(db, 'live_execution'), pendingTrade);
-      setPendingTrade(null);
-    }
-  };
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<any>(null);
+  const seriesRef = useRef<any>(null);
 
-  const cancelTrade = () => {
-    setPendingTrade(null);
-  };
+  useEffect(() => {
+    if (!chartContainerRef.current) return;
+
+    const chart = createChart(chartContainerRef.current, {
+      layout: {
+        background: { type: ColorType.Solid, color: '#111' },
+        textColor: '#888',
+      },
+      grid: {
+        vertLines: { color: '#222' },
+        horzLines: { color: '#222' },
+      },
+      width: chartContainerRef.current.clientWidth,
+      height: 200,
+      timeScale: {
+        timeVisible: true,
+        secondsVisible: true,
+      },
+    });
+
+    const series = chart.addSeries(AreaSeries, {
+      lineColor: '#22c55e',
+      topColor: 'rgba(34, 197, 94, 0.3)',
+      bottomColor: 'rgba(34, 197, 94, 0)',
+    });
+
+    chartRef.current = chart;
+    seriesRef.current = series;
+
+    const handleResize = () => {
+      if (chartContainerRef.current && chartRef.current) {
+        chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth });
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      chart.remove();
+    };
+  }, []);
 
   const chartData = useMemo(() => {
     const sortedTrades = [...trades].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-    const data: Array<{ time: string; cumulativePnL: number }> = [];
-    sortedTrades.reduce((acc, t) => {
-      const nextAcc = acc + t.pnl;
-      data.push({
-        time: new Date(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        cumulativePnL: nextAcc
-      });
-      return nextAcc;
-    }, 0);
-    return data;
+    let cumulative = 0;
+    const data = sortedTrades.map((t) => {
+      cumulative += t.pnl;
+      return {
+        time: Math.floor(new Date(t.timestamp).getTime() / 1000) as import('lightweight-charts').Time,
+        value: cumulative
+      };
+    });
+    
+    // Eliminate duplicate timestamps by keeping only the latest one
+    const uniqueDataMap = new Map();
+    data.forEach(d => uniqueDataMap.set(d.time, d));
+    return Array.from(uniqueDataMap.values()).sort((a, b) => (a.time as number) - (b.time as number));
   }, [trades]);
+
+  useEffect(() => {
+    if (seriesRef.current && chartData.length > 0) {
+      seriesRef.current.setData(chartData);
+      chartRef.current.timeScale().fitContent();
+    }
+  }, [chartData]);
 
   return (
     <>
-      {pendingTrade && (
-         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-6 z-50">
-            <div className="bg-[#111] border border-[#222] shadow-2xl p-6 rounded-lg max-w-sm w-full font-mono text-white">
-               <div className="flex items-center gap-3 mb-6 border-b border-[#222] pb-4">
-                  <AlertCircle className="text-cyan-400" size={24} />
-                  <h3 className="uppercase tracking-widest font-black text-sm">Action Required</h3>
-               </div>
-               <p className="text-xs text-gray-400 leading-relaxed mb-6">
-                  Autonomous engine has identified a high-probability trade setup. Please confirm simulated execution.
-               </p>
-               <div className="space-y-3 mb-8 text-sm">
-                  <div className="flex justify-between">
-                     <span className="text-gray-500 uppercase font-bold text-[10px]">Asset</span>
-                     <span className="font-black text-white">{pendingTrade.pair}</span>
-                  </div>
-                  <div className="flex justify-between">
-                     <span className="text-gray-500 uppercase font-bold text-[10px]">Action</span>
-                     <span className={`font-black uppercase tracking-widest ${pendingTrade.side === 'LONG' ? 'text-green-500' : 'text-red-500'}`}>{pendingTrade.side}</span>
-                  </div>
-                  <div className="flex justify-between">
-                     <span className="text-gray-500 uppercase font-bold text-[10px]">Sim. Entry</span>
-                     <span className="font-mono text-gray-300">${pendingTrade.entry?.toFixed(2)}</span>
-                  </div>
-               </div>
-               <div className="flex gap-4">
-                  <button onClick={cancelTrade} className="flex-1 py-3 text-xs border border-[#333] hover:bg-[#1a1a1a] transition-colors uppercase font-black tracking-widest text-gray-400">Reject</button>
-                  <button onClick={confirmTrade} className="flex-1 py-3 text-xs border border-cyan-500 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500 hover:text-black transition-colors uppercase font-black tracking-widest">Execute</button>
-               </div>
-            </div>
-         </div>
-      )}
-
       <div className="flex-1 p-6 flex flex-col gap-6 max-w-[1600px] mx-auto w-full">
       <header className="flex justify-between items-start border-b border-[#222] pb-6">
         <div>
@@ -298,26 +315,7 @@ export default function LiveExecutionTerminal() {
            {/* Chart */}
            <div className="bg-[#111] border border-[#222] rounded flex flex-col p-4 shrink-0">
               <h2 className="text-[10px] uppercase font-bold tracking-widest text-gray-500 mb-4">Cumulative Simulated Edge (PnL)</h2>
-              <div className="h-[200px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={chartData}>
-                          <defs>
-                             <linearGradient id="colorPnL" x1="0" y1="0" x2="0" y2="1">
-                               <stop offset="5%" stopColor="#22c55e" stopOpacity={0.3}/>
-                               <stop offset="95%" stopColor="#22c55e" stopOpacity={0}/>
-                             </linearGradient>
-                          </defs>
-                          <XAxis dataKey="time" hide />
-                          <YAxis hide domain={['auto', 'auto']} />
-                          <Tooltip 
-                             contentStyle={{ backgroundColor: '#111', borderColor: '#222', fontSize: '10px', fontFamily: 'var(--font-mono)' }}
-                             itemStyle={{ color: '#fff' }}
-                             labelStyle={{ color: '#888' }}
-                          />
-                          <Area type="step" dataKey="cumulativePnL" stroke="#22c55e" fillOpacity={1} fill="url(#colorPnL)" />
-                      </AreaChart>
-                  </ResponsiveContainer>
-              </div>
+              <div ref={chartContainerRef} className="h-[200px] w-full" />
            </div>
         </div>
 

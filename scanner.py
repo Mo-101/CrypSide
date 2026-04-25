@@ -354,6 +354,15 @@ def insert_signal(conn, sig: dict):
     )
 
 
+from g4_whitelist_gate import WhitelistGate
+
+WHITELIST_GATE = WhitelistGate(Path(__file__).parent / "whitelist.json")
+
+def g4_passes(policy: str, regime: str, side: str) -> tuple[bool, dict | None]:
+    allowed = WHITELIST_GATE.is_allowed(policy=policy, regime=regime, side=side)
+    meta = WHITELIST_GATE.get_meta(policy=policy, regime=regime, side=side)
+    return allowed, meta
+
 def scan_once():
     global _LAST_SCAN_TS, _LAST_SCAN_GAP_SECONDS
     started = time.time()
@@ -381,14 +390,28 @@ def scan_once():
             short_score, short_trace = score_short_signal(latest, regime)
 
             if long_score >= MIN_SIGNAL_SCORE and long_score >= short_score:
-                sig = build_signal(pair, "LONG", latest, regime, long_score, long_trace)
-                insert_signal(conn, sig)
-                log_event("INFO", "scanner", "signal_logged", {"pair": pair, "side": "LONG", "score": long_score, "regime": regime})
+                allowed, pocket_meta = g4_passes(policy=LOGIC_VERSION, regime=regime, side="LONG")
+                if not allowed:
+                    log_event("INFO", "scanner", "g4_whitelist_block", {
+                        "policy": LOGIC_VERSION, "regime": regime, "side": "LONG", "whitelist_size": WHITELIST_GATE.size
+                    })
+                else:
+                    long_trace["g4_whitelist"] = pocket_meta
+                    sig = build_signal(pair, "LONG", latest, regime, long_score, long_trace)
+                    insert_signal(conn, sig)
+                    log_event("INFO", "scanner", "signal_logged", {"pair": pair, "side": "LONG", "score": long_score, "regime": regime})
 
             elif short_score >= MIN_SIGNAL_SCORE and short_score > long_score:
-                sig = build_signal(pair, "SHORT", latest, regime, short_score, short_trace)
-                insert_signal(conn, sig)
-                log_event("INFO", "scanner", "signal_logged", {"pair": pair, "side": "SHORT", "score": short_score, "regime": regime})
+                allowed, pocket_meta = g4_passes(policy=LOGIC_VERSION, regime=regime, side="SHORT")
+                if not allowed:
+                    log_event("INFO", "scanner", "g4_whitelist_block", {
+                        "policy": LOGIC_VERSION, "regime": regime, "side": "SHORT", "whitelist_size": WHITELIST_GATE.size
+                    })
+                else:
+                    short_trace["g4_whitelist"] = pocket_meta
+                    sig = build_signal(pair, "SHORT", latest, regime, short_score, short_trace)
+                    insert_signal(conn, sig)
+                    log_event("INFO", "scanner", "signal_logged", {"pair": pair, "side": "SHORT", "score": short_score, "regime": regime})
 
     log_event("INFO", "scanner", "scan_complete", {"duration_seconds": round(time.time() - started, 3)})
 

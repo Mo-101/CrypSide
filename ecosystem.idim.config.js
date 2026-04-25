@@ -44,6 +44,21 @@ module.exports = {
       env: {
         PYTHONUNBUFFERED: "1"
       }
+    },
+    {
+      name: "freqtrade",
+      cwd: "/home/idona/MoStar/idim-ikang-observer",
+      script: "/home/idona/MoStar/idim-ikang-observer/.venv/bin/freqtrade",
+      args: "trade --strategy IdimIkangStrategy --config config.json",
+      interpreter: "none",
+      autorestart: true,
+      watch: false,
+      max_restarts: 20,
+      restart_delay: 5000,
+      time: true,
+      env: {
+        PYTHONUNBUFFERED: "1"
+      }
     }
   ]
 };

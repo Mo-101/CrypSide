@@ -1,8 +1,6 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { collection, query, orderBy, limit, onSnapshot, doc, setDoc, addDoc } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
 
 interface ObserverSignal {
   id: string;
@@ -13,7 +11,6 @@ interface ObserverSignal {
   stop_loss: number;
   take_profit: number;
   score: number;
-  score_bucket: number;
   regime: string;
   outcome?: string;
   r_multiple?: number;
@@ -32,81 +29,104 @@ interface ObserverStats {
 export default function IdimIkangObserver() {
   const [signals, setSignals] = useState<ObserverSignal[]>([]);
   const [stats, setStats] = useState<ObserverStats>({
-    total_signals: 148,
-    wins: 42,
-    losses: 101,
-    expired: 5,
-    win_rate: 29.58,
-    profit_factor: 1.25,
-    signals_per_day: 4.2
+    total_signals: 0,
+    wins: 0,
+    losses: 0,
+    expired: 0,
+    win_rate: 0,
+    profit_factor: 0,
+    signals_per_day: 0
   });
   
   const [isActive, setIsActive] = useState(true);
+  const [apiConnected, setApiConnected] = useState(false);
 
-  // Firestore read
+  // Fetch initial history
   useEffect(() => {
-    const q = query(collection(db, 'idim_signals'), orderBy('timestamp', 'desc'), limit(20));
-    const unsub = onSnapshot(q, (snapshot) => {
-      const sigs: ObserverSignal[] = [];
-      snapshot.forEach(d => sigs.push({ id: d.id, ...d.data() } as ObserverSignal));
-      setSignals(sigs);
-    });
-
-    const statsUnsub = onSnapshot(doc(db, 'idim_stats', 'master'), (d) => {
-      if (d.exists()) {
-        setStats(d.data() as ObserverStats);
+    const fetchHistory = async () => {
+      try {
+        const res = await fetch('/api/python/history?limit=20');
+        if (res.ok) {
+          const data = await res.json();
+          const mapped = data.history.map((d: any) => ({
+            id: String(d.signal_id || d.id),
+            pair: d.pair,
+            timestamp: d.ts,
+            side: d.side,
+            entry: d.entry,
+            stop_loss: d.stop_loss,
+            take_profit: d.take_profit,
+            score: d.score,
+            regime: d.regime,
+            outcome: d.outcome,
+            r_multiple: d.r_multiple
+          }));
+          setSignals(mapped);
+          
+          // Calculate stats locally from history for now
+          setStats(prev => ({
+            ...prev,
+            total_signals: data.history.length,
+          }));
+        }
+      } catch (e) {
+        console.error("Failed to fetch history", e);
       }
-    });
-
-    return () => {
-      unsub();
-      statsUnsub();
     };
+    fetchHistory();
   }, []);
 
-  // Simulator write
+  // WebSocket connection
   useEffect(() => {
     if (!isActive) return;
 
-    const interval = setInterval(async () => {
-      try {
-        const pairs = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'];
-        const regimes = ['STRONG_UPTREND', 'UPTREND', 'RANGING', 'DOWNTREND', 'STRONG_DOWNTREND'];
-        const pair = pairs[Math.floor(Math.random() * pairs.length)];
-        const side = Math.random() > 0.5 ? 'LONG' : 'SHORT';
-        const entry = pair === 'BTCUSDT' ? 65000 + Math.random()*2000 : pair === 'ETHUSDT' ? 3500 + Math.random()*200 : 180 + Math.random()*15;
-        const stop = side === 'LONG' ? entry * 0.98 : entry * 1.02;
-        const tp = side === 'LONG' ? entry * 1.06 : entry * 0.94;
+    let ws: WebSocket;
+    const connect = () => {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/api/python/ws`;
+      ws = new WebSocket(wsUrl);
+      
+      ws.onopen = () => setApiConnected(true);
+      ws.onclose = () => {
+        setApiConnected(false);
+        // Retry connection
+        if (isActive) setTimeout(connect, 3000);
+      };
+      
+      ws.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.type === 'new_signal') {
+            const sig = payload.data;
+            const newSig: ObserverSignal = {
+                id: String(sig.signal_id || sig.id),
+                pair: sig.pair,
+                timestamp: sig.ts,
+                side: sig.side,
+                entry: sig.entry,
+                stop_loss: sig.stop_loss,
+                take_profit: sig.take_profit,
+                score: sig.score,
+                regime: sig.regime
+            };
+            setSignals(prev => [newSig, ...prev].slice(0, 50));
+            setStats(prev => ({ ...prev, total_signals: prev.total_signals + 1 }));
+          }
+        } catch (e) {
+          console.error("WS parse error", e);
+        }
+      };
+    };
 
-        await addDoc(collection(db, 'idim_signals'), {
-          pair,
-          timestamp: new Date().toISOString(),
-          side,
-          entry,
-          stop_loss: stop,
-          take_profit: tp,
-          score: Math.floor(Math.random() * 55) + 45, // 45-100
-          score_bucket: 60,
-          regime: regimes[Math.floor(Math.random() * regimes.length)],
-        });
+    connect();
 
-        const newStats = {
-          ...stats,
-          total_signals: stats.total_signals + 1,
-          wins: stats.wins + (Math.random() > 0.6 ? 1 : 0),
-          losses: stats.losses + (Math.random() > 0.4 ? 1 : 0),
-        };
-        newStats.win_rate = (newStats.wins / (newStats.wins + newStats.losses)) * 100 || 0;
-        
-        await setDoc(doc(db, 'idim_stats', 'master'), newStats);
-
-      } catch (e) {
-        console.error(e);
+    return () => {
+      if (ws) {
+        ws.onclose = null;
+        ws.close();
       }
-    }, 4500);
-
-    return () => clearInterval(interval);
-  }, [isActive, stats]);
+    };
+  }, [isActive]);
 
   return (
     <div className="flex-1 p-6 flex flex-col gap-6">

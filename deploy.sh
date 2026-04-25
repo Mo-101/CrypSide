@@ -24,6 +24,7 @@ source "$VENV_DIR/bin/activate"
 echo "[3/7] Installing Python dependencies"
 pip install --upgrade pip
 pip install -r requirements.txt
+pip install -e ./freqtrade
 
 echo "[4/7] Creating PostgreSQL database and tables"
 if psql -lqt | cut -d \| -f 1 | grep -qw "$DB_NAME"; then
